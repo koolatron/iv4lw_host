@@ -3,6 +3,7 @@
 use strict;
 use Getopt::Long;
 use Device::USB;
+use Time::HiRes qw(gettimeofday);
 
 my %opts;
 if (!&GetOptions(\%opts,
@@ -21,7 +22,7 @@ Valid actions:
      settime       sets time buffer in device
      gettime       gets time buffer from device
 
-     set actions require -params PARAMS.
+     set actions require -params PARAMS.  PARAMS may be "now" for settime (sets clock from system time)
 
 Optional arguments:
      verbose       print useful debugging information to console
@@ -46,12 +47,8 @@ my $CUSTOM_RQ_SET_STATE 	= 1;
 my $CUSTOM_RQ_GET_STATE 	= 2;
 my $CUSTOM_RQ_SET_BUFFER 	= 3;
 my $CUSTOM_RQ_GET_BUFFER	= 4;
-my $CUSTOM_RQ_SET_HOURS 	= 5;
-my $CUSTOM_RQ_GET_HOURS 	= 6;
-my $CUSTOM_RQ_SET_MINS 		= 7;
-my $CUSTOM_RQ_GET_MINS 		= 8;
-my $CUSTOM_RQ_SET_SECS 		= 9;
-my $CUSTOM_RQ_GET_SECS 		= 10;
+my $CUSTOM_RQ_SET_TIME		= 11;
+my $CUSTOM_RQ_GET_TIME		= 12;
 
 printf VERBOSE "Device: %04X:%04X\n", $dev->idVendor(), $dev->idProduct();
 
@@ -69,44 +66,49 @@ $dev->claim_interface( 0 );
 
 if ($opts{action} eq 'setstate') {
 	die "Need to specify parameters for setstate!" unless $opts{params};
+	print STDOUT "Setting state to:     ".$opts{params}."\n";
 	setState($opts{params});
-	print STDOUT "Set state to:   ".$opts{params}."\n";
-	print STDOUT "Current state:  ".getState()."\n";
+	print STDOUT "Read current state:   ".getState()."\n";
 }
 
 if ($opts{action} eq 'setbuffer') {
 	die "Need to specify parameters for setstate!" unless $opts{params};
+	print STDOUT "Setting buffer to:   ".$opts{params}."\n";
 	setBuffer($opts{params});
-	print STDOUT "Set buffer to:  ".$opts{params}."\n";
-	print STDOUT "Current buffer: ".getBuffer(),"\n";
+	print STDOUT "Read current buffer: ".getBuffer(),"\n";
 }
 
 if ($opts{action} eq 'settime') {
 	die "Need to specify parameters for settime!" unless $opts{params};
+	print STDOUT "Read current time:   ".getTime()."\n";
+	print STDOUT "Setting time to:     ".$opts{params}."\n";
 	setTime($opts{params});
-	print STDOUT "Set time to:    ".$opts{params}."\n";
-	print STDOUT "Current time:   ".getTime()."\n";
+	print STDOUT "Read current time:   ".getTime()."\n";
 }
 
 if ($opts{action} eq 'getstate') {
-	print STDOUT "Current state:  ".getState()."\n";
+	print STDOUT "Read current state:  ".getState()."\n";
 }
 
 if ($opts{action} eq 'getbuffer') {
-	print STDOUT "Current buffer: ".getBuffer()."\n";
+	print STDOUT "Read current buffer: ".getBuffer()."\n";
+}
+
+if ($opts{action} eq 'gettime') {
+	print STDOUT "Read current time:   ".getTime()."\n";
 }
 
 sub setBuffer {
 	my $buffer = shift;
 	$buffer = substr $buffer, 0, 4;		# chop buffer to 4 chars
 	$buffer =~ tr/a-z/A-Z/;			# convert to uppercase
-	$dev->control_msg( 64, $CUSTOM_RQ_SET_BUFFER, 0, 0, $buffer, 4, 5000 );
-	print VERBOSE "Set display buffer to: $buffer\n";
+	my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_BUFFER, 0, 0, $buffer, 4, 5000 );
+	print VERBOSE "setBuffer: returned $ret\n";
 }
 
 sub getBuffer {
-	$dev->control_msg( 192, $CUSTOM_RQ_GET_BUFFER, 0, 0, my $buffer = "\0", 8, 5000 );
-	print VERBOSE "Contents of display buffer: ".$buffer."\n";
+	my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_BUFFER, 0, 0, my $buffer = "\0", 8, 5000 );
+	print VERBOSE "getBuffer: returned $ret\n";
 
 	return $buffer;
 }
@@ -114,13 +116,13 @@ sub getBuffer {
 sub setState {
 	my $state = shift;
 
-	$dev->control_msg( 64, $CUSTOM_RQ_SET_STATE, ord($state), 0, my $buffer = "\0", 0, 5000 );
-	print VERBOSE "Set hours variable to: $state\n";
+	my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_STATE, ord($state), 0, my $buffer = "\0", 0, 5000 );
+	print VERBOSE "setState: returned $ret\n";
 }
 
 sub getState {
-	$dev->control_msg( 192, $CUSTOM_RQ_GET_STATE, 0, 0, my $buffer = "\0", 1, 5000 );
-	print VERBOSE "Contents of state variable: $buffer\n";
+	my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_STATE, 0, 0, my $buffer = "\0", 1, 5000 );
+	print VERBOSE "getState: returned $ret\n";
 
 	return $buffer;
 }
@@ -130,63 +132,28 @@ sub setTime {
 
 	if ($timeArg eq 'now') {
 		my @timeData = localtime(time);
-		$timeArg = $timeData[2].":".$timeData[1].":".$timeData[0];
+		my @hiResTimeData = gettimeofday();
+		my $ticks = (($hiResTimeData[1] - ($hiResTimeData[1] % 4000)) / 4000);  # convert uS to ticks
+		$timeArg = $timeData[2].":".$timeData[1].":".$timeData[0].":".$ticks;
 	}
 
 	my @hms = split /:/, $timeArg;
 
-	setHours($hms[0]);
-	setMins($hms[1]);
-	setSecs($hms[2]);
+	unless ($hms[3]) { $hms[3] = 0; }
+	unless ($hms[2]) { $hms[2] = 0; }	# make seconds and ticks optional
+
+	my $buffer = pack ("CCCC", $hms[3], $hms[2], $hms[1], $hms[0]);
+
+	my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_TIME, 0, 0, $buffer, 4, 5000 );
+	print VERBOSE "setTime: returned $ret\n";
 }
 
 sub getTime {
-	my $hours = getHours();
-	my $mins = getMins();
-	my $secs = getSecs();
+	my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_TIME, 0, 0, my $buffer = "\0", 4, 5000 );
 
-	return sprintf("%02d:%02d:%02d", $hours, $mins, $secs);
+	my @hms = unpack ("CCCC", $buffer);
+
+	return sprintf ("%02d:%02d:%02d:%03d", $hms[3], $hms[2], $hms[1], $hms[0]);
 }
 
-sub setHours {
-	my $hours = shift;
-
-	$dev->control_msg( 64, $CUSTOM_RQ_SET_HOURS, $hours, 0, my $buffer = "\0", 0, 5000 );
-	print VERBOSE "Set hours variable to: $hours\n";
-}
-
-sub setMins {
-	my $mins = shift;
-
-	$dev->control_msg( 64, $CUSTOM_RQ_SET_MINS, $mins, 0, my $buffer = "\0", 0, 5000 );
-	print VERBOSE "Set mins variable to: $mins\n";
-}
-
-sub setSecs {
-	my $secs = shift;
-
-	$dev->control_msg( 64, $CUSTOM_RQ_SET_SECS, $secs, 0, my $buffer = "\0", 0, 5000 );
-	print VERBOSE "Set secs variable to: $secs\n";
-}
-
-sub getHours {
-	$dev->control_msg( 192, $CUSTOM_RQ_GET_HOURS, 0, 0, my $buffer = "\0", 1, 5000 );
-	print VERBOSE "Contents of hours variable: $buffer\n";
-
-	return ord($buffer);
-}
-
-sub getMins {
-	$dev->control_msg( 192, $CUSTOM_RQ_GET_MINS, 0, 0, my $buffer = "\0", 1, 5000 );
-	print VERBOSE "Contents of minutes variable: $buffer\n";
-
-	return ord($buffer);
-}
-
-sub getSecs {
-	$dev->control_msg( 192, $CUSTOM_RQ_GET_SECS, 0, 0, my $buffer = "\0", 1, 5000 );
-	print VERBOSE "Contents of seconds variable: $buffer\n";
-
-	return ord($buffer);
-}
 0;
