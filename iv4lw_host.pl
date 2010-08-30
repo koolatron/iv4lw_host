@@ -98,6 +98,8 @@ if ($opts{action} eq 'gettime') {
 	print STDOUT "Read current time:   ".getTime()."\n";
 }
 
+$dev->release_interface( 0 );
+
 sub setBuffer {
 	my $buffer = shift;
 	$buffer = substr $buffer, 0, 4;		# chop buffer to 4 chars
