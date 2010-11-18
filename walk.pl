@@ -8,6 +8,8 @@ sub walk {
 
 	my @allwords = `cat /usr/share/dict/words | egrep '^[a-z]{4}\$'`;
 	
+	my @matchlog;
+
 	# choose an intial random word in @allwords
     	my $thisword = $allwords[int(rand($#allwords))];
     	chomp $thisword;
@@ -20,8 +22,6 @@ sub walk {
 				    @thiswordarray[0].".".@thiswordarray[2].@thiswordarray[3],
 				    @thiswordarray[0].@thiswordarray[1].".".@thiswordarray[3],
 				    @thiswordarray[0].@thiswordarray[1].@thiswordarray[2]."." );
-
-		print $thisword."\n";
 
 		# generate a list of matches for this word
 		my %allmatches;
@@ -37,16 +37,26 @@ sub walk {
 		}
 
 		delete $allmatches{$thisword};
+
+		for (@matchlog) {
+			delete $allmatches{$_};
+		}
+
 		my @allmatches = keys %allmatches;
 		#for (sort @allmatches) {
 		#	print "-- $_\n";
 		#}
 
 		# choose a new random word from the list, or generate a new one if we're at a leaf
-		if ($#allmatches > 0) {
-			$thisword = $allmatches[int(rand($#allmatches))];
+		if ($#allmatches >= 0) {
+			$thisword = $allmatches[int(rand($#allmatches+1))];
+			push @matchlog, $thisword;
 		} else {
-			$thisword = $allwords[int(rand($#allwords))];
+			$thisword = $allwords[int(rand($#allwords+1))];
+			chomp $thisword;
+			push @matchlog, $thisword;
 		}
+
+		print $thisword."\n";
 	}
 }
