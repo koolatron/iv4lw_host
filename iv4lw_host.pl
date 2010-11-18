@@ -24,10 +24,15 @@ Valid actions:
 
      set actions require -params PARAMS.  PARAMS may be "now" for settime (sets clock from system time)
 
+     computedrift  computes the drift that the clock has suffered since
+                   last being set.
+
 Optional arguments:
      verbose       print useful debugging information to console
      vendor        override vendor ID string when searching for device
      product       override product ID string when searching for device
+     trim          uses the error calculation from computedrift to trim the timer counts
+                   and improve accuracy.
 USAGE
 }
 
@@ -98,6 +103,10 @@ if ($opts{action} eq 'gettime') {
 	print STDOUT "Read current time:   ".getTime()."\n";
 }
 
+if ($opts{action} eq 'computedrift') {
+	computeDrift($opts{params});
+}
+
 $dev->release_interface( 0 );
 
 sub setBuffer {
@@ -156,6 +165,32 @@ sub getTime {
 	my @hms = unpack ("CCCC", $buffer);
 
 	return sprintf ("%02d:%02d:%02d:%03d", $hms[3], $hms[2], $hms[1], $hms[0]);
+}
+
+sub computeDrift {
+	my $lastSetTime = shift;
+	my @lastSethmst = split /:/, $lastSetTime;
+
+	my @timeData = localtime(time);
+	my @hiResTimeData = gettimeofday();
+	my $ticks = (($hiResTimeData[1] - ($hiResTimeData[1] % 4000)) / 4000);  # convert uS to ticks
+
+	my @currentHosthmst = ($timeData[2], $timeData[1], $timeData[0], $ticks);
+	my @currentDevicehmst = split /:/, getTime();
+
+	printf STDOUT "Last set time:       %02d:%02d:%02d:%03d\n", $lastSethmst[0], $lastSethmst[1], $lastSethmst[2], $lastSethmst[3];
+	printf STDOUT "Current host time:   %02d:%02d:%02d:%03d\n", $currentHosthmst[0], $currentHosthmst[1], $currentHosthmst[2], $currentHosthmst[3];
+	printf STDOUT "Current device time: %02d:%02d:%02d:%03d\n", $currentDevicehmst[0], $currentDevicehmst[1], $currentDevicehmst[2], $currentDevicehmst[3];
+
+	my $drift = (($currentDevicehmst[0] * 3600000) + ($currentDevicehmst[1] * 60000) + ($currentDevicehmst[2] * 1000) + ($currentDevicehmst[3] * 4)) - (($currentHosthmst[0] * 3600000) + ($currentHosthmst[1] * 60000) + ($currentHosthmst[2] * 1000) + ($currentHosthmst[3] * 4));
+	print STDOUT "Device drift (ms):   ".$drift."\n";
+
+	my $elapsed = (($currentHosthmst[0] * 3600000) + ($currentHosthmst[1] * 60000) + ($currentHosthmst[2] * 1000) + ($currentHosthmst[3] * 4)) - (($lastSethmst[0] * 3600000) + ($lastSethmst[1] * 60000) + ($lastSethmst[2] * 1000) + ($lastSethmst[3] * 4));
+	print STDOUT "Elapsed time (ms):   ".$elapsed."\n";
+	print STDOUT "Elapsed time (mins): ".sprintf("%07f", ($elapsed/60000))."\n";
+
+	my $driftPercentage = (abs($drift) / $elapsed) * 100;
+	print STDOUT "Percentage drift:    ".sprintf("%07f", $driftPercentage)." %\n";
 }
 
 0;
