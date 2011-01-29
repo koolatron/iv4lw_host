@@ -27,6 +27,7 @@ my $CUSTOM_RQ_SET_BUFFER    = 3;
 my $CUSTOM_RQ_GET_BUFFER    = 4;
 my $CUSTOM_RQ_SET_TIME      = 11;
 my $CUSTOM_RQ_GET_TIME      = 12;
+my $CUSTOM_RQ_SET_RAW       = 13;
 
 my $dev;
 
@@ -99,6 +100,19 @@ sub getTime {
     return sprintf ("%02d:%02d:%02d:%03d", $hms[3], $hms[2], $hms[1], $hms[0]);
 }
 
+sub setRaw {
+    my $place = shift;
+    my $buffer = pack ("CCC", 0x00, 0x00, 0x01);
+
+    my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_RAW, $place, 0, $buffer, 3, 5000 );
+    syslog("debug", "setRaw: returned $ret");
+
+    return $buffer;
+}
+
+sub twirl {
+}
+
 sub scrollString {
     my $message = "     ".shift;
     
@@ -155,7 +169,7 @@ sub scrollString {
 
         setBuffer($substring);
 
-        usleep(200000);
+        usleep(250000);
     }
 
     setState($initialState);
@@ -184,58 +198,66 @@ sub randword {
 
 
 sub walk {
-    my $nwords = shift;
+	my $nwords = shift;
+	my @allwords = `cat /usr/share/dict/words | egrep '^[a-z]{4}\$'`;    
+	my @matchlog;
 
-    my @allwords = `cat /usr/share/dict/words | egrep '^.{4}\$'`;
-    
-    my $initialState = getState();
+	my $initialState = getState();
 
-    # choose an intial random word in @allwords
-    my $thisword = $allwords[int(rand($#allwords))];
-    chomp $thisword;
+	# choose an intial random word in @allwords
+    	my $thisword = $allwords[int(rand($#allwords))];
+    	chomp $thisword;
  
-    for ($nwords; $nwords > 0; $nwords--) {
+    	for ($nwords; $nwords > 0; $nwords--) {
+        	my @thiswordarray = split //, $thisword;
 
-        # iterate
-        my @thiswordarray = split //, $thisword;
+		# construct a set of search strings from our random word
+		my @searchwords = ( ".".@thiswordarray[1].@thiswordarray[2].@thiswordarray[3],
+				    @thiswordarray[0].".".@thiswordarray[2].@thiswordarray[3],
+				    @thiswordarray[0].@thiswordarray[1].".".@thiswordarray[3],
+				    @thiswordarray[0].@thiswordarray[1].@thiswordarray[2]."." );
 
-        my @nextwords;
+		# generate a list of matches for this word
+		my %allmatches;
+		for (@searchwords) {
+			my $searchword = $_;
+			my @matchwords = grep /$searchword/i, @allwords;
 
-        # which letter?
-        my $letter = int(rand(3));
+			for (@matchwords) {
+				my $matchword = $_;
+				chomp $matchword;
+				$allmatches{$matchword} = 1;
+			}
+		}
 
-        if ($letter == 0) {
-            @nextwords = `cat /usr/share/dict/words | egrep -i '^.$thiswordarray[1]$thiswordarray[2]$thiswordarray[3]\$'`;
-        }
-        if ($letter == 1) {
-            @nextwords = `cat /usr/share/dict/words | egrep -i '^$thiswordarray[0].$thiswordarray[2]$thiswordarray[3]\$'`;
-        }
-        if ($letter == 2) {
-            @nextwords = `cat /usr/share/dict/words | egrep -i '^$thiswordarray[0]$thiswordarray[1].$thiswordarray[3]\$'`;
-        }
-        if ($letter == 3) {
-            @nextwords = `cat /usr/share/dict/words | egrep -i '^$thiswordarray[0]$thiswordarray[1]$thiswordarray[2].\$'`;
-        }
+		# don't match the word we started from
+		delete $allmatches{$thisword};
 
-        my $nextword = $nextwords[int(rand($#nextwords))];
+		for (@matchlog) {
+			delete $allmatches{$_};
+		}
 
-        if ($thisword =~ /$nextword/i) {
-            $thisword = $allwords[int(rand($#allwords))];
-            $nwords++;
-            next;
-        }
+		my @allmatches = keys %allmatches;
 
-        $thisword = $nextword;
+		# choose a new random word from the list, or generate a new one if we're at a leaf
+		if ($#allmatches >= 0) {
+			$thisword = $allmatches[int(rand($#allmatches+1))];
+			push @matchlog, $thisword;
+		} else {
+			$thisword = $allwords[int(rand($#allwords+1))];
+			chomp $thisword;
+			push @matchlog, $thisword;
+		}
 
-        $thisword =~ tr/[a-z]/[A-Z]/;
+		$thisword =~ tr/[a-z]/[A-Z]/;
 
-        setState('U');
-        setBuffer($thisword);
+		setState('U');
+		setBuffer($thisword);
     
-        sleep(1);
-    }
+		sleep(1);
+	}
 
-    setState($initialState);
+	setState($initialState);
 }
     
 sub init {
@@ -286,7 +308,7 @@ sub main {
 
     while (1) {
         @time = localtime(time);
-        if (($time[1] == 0) && ($time[0] == 0)) {
+        if ($time[0] == 30) {
             setTime('now');
         }
 
@@ -304,6 +326,14 @@ sub main {
 
             if ($string =~ /rand\s(\d+)/) {
                 randword($1);
+            }
+
+            if ($string =~ /raw\s(\d+)/) {
+                setRaw($1);
+            }
+
+            if ($string =~ /state\s(\D)/) {
+                setState($1);
             }
 
             unlink "/tmp/iv4lw";
