@@ -102,7 +102,9 @@ sub getTime {
 
 sub setRaw {
     my $place = shift;
-    my $buffer = pack ("CCC", 0x00, 0x00, 0x01);
+    my @charString = @{translateGlyph(shift)};
+
+    my $buffer = pack ("CCC", hex($charString[0]), hex($charString[1]), hex($charString[2]));
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_RAW, $place, 0, $buffer, 3, 5000 );
     syslog("debug", "setRaw: returned $ret");
@@ -110,7 +112,47 @@ sub setRaw {
     return $buffer;
 }
 
+sub translateGlyph {
+    my $thisGlyphAsString = shift;
+    my @thisGlyphAsList;
+    my @bitChain = ("0", "0", "0", "0", "0", "0", "p", "o", "a", "h", "g", "m", "n", "f", "0", "0", "l", "e", "d", "c", "b", "i", "j", "k");
+
+    for (@bitChain) {
+        my $bit = $_;
+        if ($bit eq "0") { push @thisGlyphAsList, "0"; next; }
+        if ($thisGlyphAsString =~ /$bit/) { push @thisGlyphAsList, "1"; next; }
+        push @thisGlyphAsList, "0";
+    }
+
+    reverse @thisGlyphAsList;
+    my $thisGlyphAsBinaryString = join '', @thisGlyphAsList;
+    my $thisGlyphAsHexString = sprintf("%06x", oct("0b$thisGlyphAsBinaryString"));
+
+    my @thisGlyphAsDelimitedHex = split '', $thisGlyphAsHexString;
+    @thisGlyphAsDelimitedHex = ("0x".$thisGlyphAsDelimitedHex[0].$thisGlyphAsDelimitedHex[1], "0x".$thisGlyphAsDelimitedHex[2].$thisGlyphAsDelimitedHex[3], "0x".$thisGlyphAsDelimitedHex[4].$thisGlyphAsDelimitedHex[5]);
+
+    return \@thisGlyphAsDelimitedHex;
+}
+
+
 sub twirl {
+    my $revolutions = int(shift);
+
+    setState("U");
+    
+    while ($revolutions) {
+        for ('a' .. 'p') {
+            my $letter = $_;
+            for (0 .. 3) {
+                my $tube = $_;
+                setRaw($tube, $letter);
+                usleep(15000);
+            }
+        }
+        $revolutions -= 1;
+    }
+
+    setState("T");
 }
 
 sub scrollString {
@@ -328,8 +370,8 @@ sub main {
                 randword($1);
             }
 
-            if ($string =~ /raw\s(\d+)/) {
-                setRaw($1);
+            if ($string =~ /twirl\s(\d+)/) {
+                twirl($1);
             }
 
             if ($string =~ /state\s(\D)/) {
