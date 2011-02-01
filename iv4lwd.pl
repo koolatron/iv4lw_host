@@ -6,17 +6,23 @@ use Device::USB;
 use Time::HiRes qw(gettimeofday);
 use Time::HiRes qw(usleep);
 use Sys::Syslog;
+use Socket;
+use Carp;
 use POSIX qw(setsid);
 
 my %opts;
 if (!&GetOptions(\%opts,
     'daemonize',
     'run',
+    'port=s',
+    'proto=s',
    ) || (!$opts{run})) {
     exit(1);
 }
 
 $SIG{TERM} =\&sigterm;
+
+my $EOL = "\015\012";
 
 my $VENDOR = 0x16c0;
 my $PRODUCT = 0x05dc;
@@ -348,40 +354,47 @@ sub sigterm {
 sub main {
     my @time; 
 
+    my $port = $opts{port} ? $opts{port} : undef;
+    my $proto = $opts{proto} ? getprotobyname($opts{proto}) : getprotobyname('tcp');
+
+    if ($port && $proto) {
+        socket(Server, PF_INET, SOCK_STREAM, $proto)                || die "socket: $!";
+        setsockopt(Server, SOL_SOCKET, SO_REUSEADDR, pack("l", 1))  || die "setsockopt: $!";
+        bind(Server, sockaddr_in($port, INADDR_ANY))                || die "bind: $!";
+        listen(Server, SOMAXCONN)                                   || die "listen: $!";
+
+        syslog("info", "server started on port $port");
+    }
+
+
     while (1) {
         @time = localtime(time);
         if ($time[0] == 30) {
             setTime('now');
         }
 
-        if (-e "/tmp/iv4lw") {
-            my $string = `cat /tmp/iv4lw`;
-            chomp $string;
+        my $paddr;
 
-            if ($string =~ /scroll\s(.*)/) {
+        for ( ; $paddr = accept(Client,Server); close Client) {
+            my ($port, $iaddr) = sockaddr_in($paddr);
+            my $name = gethostbyaddr($iaddr, AF_INET);
+
+            syslog("info", "connection from $name (". inet_ntoa($iaddr). ") on port $port");
+
+            my $command = <Client>;
+            chomp $command;
+            syslog("info", "recieved command: $command");
+
+            if ($command =~ /scroll\s(.*)/ ) {
                 scrollString($1);
             }
-
-            if ($string =~ /walk\s(\d+)/) {
-                walk($1);
-            }
-
-            if ($string =~ /rand\s(\d+)/) {
+            if ($command =~ /rand\s(\d+)/ ) {
                 randword($1);
             }
-
-            if ($string =~ /twirl\s(\d+)/) {
-                twirl($1);
+             if ($command =~ /walk\s(\d+)/ ) {
+                walk($1);
             }
-
-            if ($string =~ /state\s(\D)/) {
-                setState($1);
-            }
-
-            unlink "/tmp/iv4lw";
         }
-
-        sleep(1);
     }
 }
 
