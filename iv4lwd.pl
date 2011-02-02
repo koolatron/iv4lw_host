@@ -8,6 +8,7 @@ use Time::HiRes qw(usleep);
 use Sys::Syslog;
 use Socket;
 use Carp;
+use IO::Select;
 use POSIX qw(setsid);
 
 my %opts;
@@ -16,7 +17,7 @@ if (!&GetOptions(\%opts,
     'run',
     'port=s',
     'proto=s',
-   ) || (!$opts{run})) {
+   ) || (!$opts{run}) || (!$opts{port})) {
     exit(1);
 }
 
@@ -53,7 +54,7 @@ sub setBuffer {
     $buffer = substr $buffer, 0, 4;     # chop buffer to 4 chars
     $buffer =~ tr/a-z/A-Z/;         # convert to uppercase
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_BUFFER, 0, 0, $buffer, 4, 5000 );
-    syslog("debug", "setBuffer: returned $ret");
+    syslog("debug", "WARNING: setBuffer: returned $ret") if ($ret != 4);
 }
 
 sub getBuffer {
@@ -67,12 +68,12 @@ sub setState {
     my $state = shift;
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_STATE, ord($state), 0, my $buffer = "\0", 0, 5000 );
-    syslog("debug", "setState: returned $ret");
+    syslog("debug", "WARNING: setState: returned $ret") if ($ret != 0);
 }
 
 sub getState {
     my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_STATE, 0, 0, my $buffer = "\0", 1, 5000 );
-    syslog("debug", "getState: returned $ret");
+    syslog("debug", "WARNING: getState: returned $ret") if ($ret != 1);
 
     return $buffer;
 }
@@ -95,7 +96,7 @@ sub setTime {
     my $buffer = pack ("CCCC", $hms[3], $hms[2], $hms[1], $hms[0]);
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_TIME, 0, 0, $buffer, 4, 5000 );
-    syslog("debug", "setTime: returned $ret");
+    syslog("debug", "WARNING: setTime: returned $ret") if ($ret != 4);
 }
 
 sub getTime {
@@ -113,7 +114,7 @@ sub setRaw {
     my $buffer = pack ("CCC", hex($charString[0]), hex($charString[1]), hex($charString[2]));
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_RAW, $place, 0, $buffer, 3, 5000 );
-    syslog("debug", "setRaw: returned $ret");
+    syslog("debug", "WARNING: setRaw: returned $ret") if ($ret != 3);
 
     return $buffer;
 }
@@ -322,7 +323,7 @@ sub init {
         exit(1);
     }
 
-    syslog("info", "Wicked!  Found it.");
+    syslog("info", "Found it, YEEEAH");
 
     $dev->open();
 
@@ -346,14 +347,12 @@ sub daemonize {
 }
 
 sub sigterm {
-    syslog("info", "Caught SIGTERM.  Dying gracefully.");
+    syslog("info", "Caught SIGTERM.  Goodbye, cruel world!");
     cleanup();
     exit(1);
 }
 
 sub main {
-    my @time; 
-
     my $port = $opts{port} ? $opts{port} : undef;
     my $proto = $opts{proto} ? getprotobyname($opts{proto}) : getprotobyname('tcp');
 
@@ -366,34 +365,43 @@ sub main {
         syslog("info", "server started on port $port");
     }
 
+    START: while (1) {
+        my $paddr;
+        setTime('now');
 
-    while (1) {
-        @time = localtime(time);
-        if ($time[0] == 30) {
-            setTime('now');
+        eval {
+            local $SIG{ALRM} = sub { die "alarm\n" };
+            alarm 30;
+            $paddr = accept(Client,Server);
+            alarm 0;
+        };
+ 
+        if ($@) {
+            die unless $@ eq "alarm\n";
+            next START;
         }
 
-        my $paddr;
+        my ($port, $iaddr) = sockaddr_in($paddr);
+        my $name = gethostbyaddr($iaddr, AF_INET);
 
-        for ( ; $paddr = accept(Client,Server); close Client) {
-            my ($port, $iaddr) = sockaddr_in($paddr);
-            my $name = gethostbyaddr($iaddr, AF_INET);
+        syslog("info", "connection from $name (". inet_ntoa($iaddr). ") on port $port");
 
-            syslog("info", "connection from $name (". inet_ntoa($iaddr). ") on port $port");
+        my $command = <Client>;
+        chomp $command;
+        syslog("info", "recieved command: $command");
+        close Client; 
 
-            my $command = <Client>;
-            chomp $command;
-            syslog("info", "recieved command: $command");
-
-            if ($command =~ /scroll\s(.*)/ ) {
-                scrollString($1);
-            }
-            if ($command =~ /rand\s(\d+)/ ) {
-                randword($1);
-            }
-             if ($command =~ /walk\s(\d+)/ ) {
-                walk($1);
-            }
+        if ($command =~ /scroll\s(.*)/ ) {
+            scrollString($1);
+        }
+        if ($command =~ /rand\s(\d+)/ ) {
+            randword($1);
+        }
+        if ($command =~ /walk\s(\d+)/ ) {
+            walk($1);
+        }
+        if ($command =~ /twirl\s(\d+)/ ) {
+            twirl($1);
         }
     }
 }
