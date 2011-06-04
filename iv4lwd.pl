@@ -35,6 +35,7 @@ my $CUSTOM_RQ_GET_BUFFER    = 4;
 my $CUSTOM_RQ_SET_TIME      = 11;
 my $CUSTOM_RQ_GET_TIME      = 12;
 my $CUSTOM_RQ_SET_RAW       = 13;
+my $CUSTOM_RQ_GET_ADC       = 14;
 
 my $dev;
 
@@ -60,6 +61,15 @@ sub setBuffer {
 sub getBuffer {
     my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_BUFFER, 0, 0, my $buffer = "\0", 8, 5000 );
     syslog("debug", "getBuffer: returned $ret");
+
+    return $buffer;
+}
+
+sub getADC {
+    my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_ADC, 0, 0, my $buffer = "\0", 1, 5000 );
+    syslog("debug", "WARNING: getADC: returned $ret") if ($ret != 1);
+
+    $buffer = unpack("C", $buffer);
 
     return $buffer;
 }
@@ -402,6 +412,26 @@ sub main {
         }
         if ($command =~ /twirl\s(\d+)/ ) {
             twirl($1);
+        }
+        if ($command =~ /buffer?/ ) {
+            my $buffer = getBuffer();
+            syslog("info", "getBuffer: buffer contents: $buffer");
+        }
+        if ($command =~ /sb\s(.*)/ ) {
+            setBuffer($1);
+        }
+        if ($command =~ /volts\?/ ) {
+            my $buffer = getADC();
+            syslog("info", "getADC: ADC register contents: $buffer");
+            syslog("info", "output voltage: ".($buffer * 0.435)."V");
+        }
+        if ($command =~ /state\?/ ) {
+            my $buffer = getState();
+            syslog("info", "getState: state register contents: $buffer");
+        }
+        if ($command =~ /time\?/ ) {
+            my $buffer = getTime();
+            syslog("info", "getTime: time register contents: $buffer");
         }
     }
 }

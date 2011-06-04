@@ -1,0 +1,23 @@
+Project: iv4lw_host
+Author:  Sean Hill
+
+iv4lw_host is a set of perl scripts that collectively represent host-side tool
+for interacting with the iv4lw gadget from a host computer.  Currently, it's
+more of a dumping ground for me to track scripts that I don't want to lose, but
+have no immediate use for someone besides me.
+
+README: This file
+bitfields.pl: Legwork script that takes a list of tube segments and transforms
+  them into bitfield defines suitable for inclusion in the iv4lw device code.
+  This is handy for creating additional fonts.
+iv4lw_host.pl: Host control script for the iv4lw device.  Includes some debug-
+  ging handiness for things like calibrating timekeeping goop, but was mostly a
+  stepping stone to get to iv4lwd.pl.
+iv4lwd.pl: Host control daemon for the iv4lw device.  Starts a server, then
+  forks and listens for work to do.  Keeps the device displaying the right time
+  and scrolls funny messages.  That kind of thing.
+walk.pl: This was the core logic I used to write part of iv4lwd.pl - implements
+  a random walk down a tree of words that differ from one another by only one
+  letter.  It's entertaining to watch.
+
+Of these, iv4lwd.pl is nominally the most useful.
