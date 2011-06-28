@@ -53,7 +53,7 @@ exit(0);
 sub setBuffer {
     my $buffer = shift;
     $buffer = substr $buffer, 0, 4;     # chop buffer to 4 chars
-    $buffer =~ tr/a-z/A-Z/;         # convert to uppercase
+    #$buffer =~ tr/a-z/A-Z/;         # convert to uppercase
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_BUFFER, 0, 0, $buffer, 4, 5000 );
     syslog("debug", "WARNING: setBuffer: returned $ret") if ($ret != 4);
 }
@@ -176,7 +176,7 @@ sub scrollString {
     my $message = "     ".shift;
     
     # convert to uppercase
-    $message =~ tr/a-z/A-Z/;
+    #$message =~ tr/a-z/A-Z/;
     $message =~ tr/ /\//;
     
     # stick it in an array for easy manipulation
@@ -318,7 +318,30 @@ sub walk {
 
 	setState($initialState);
 }
-    
+
+sub scrollTweet {
+    my $lastTweet = shift;
+
+    my $cmd = 'perl tweetronium.pl';
+    my $tweet = `$cmd`;
+    chomp $tweet;
+
+    ($tweet = $tweet) =~ s/.*<(.*)>/\@$1/;
+    ($tweet = $tweet) =~ s/[^ A-Za-z0-9@?]//g;
+    ($tweet = $tweet) =~ s/http.*//;
+
+    print "tweet:     $tweet\n";
+    print "lastTweet: $lastTweet\n";
+
+    return $tweet if ($tweet eq $lastTweet);
+
+    $lastTweet = $tweet;
+
+    scrollString($tweet);
+
+    return $tweet;
+}
+
 sub init {
     openlog($0, "pid", "local0");
     syslog("info", "iv4lwd starting...");
@@ -375,9 +398,12 @@ sub main {
         syslog("info", "server started on port $port");
     }
 
+    my $lastTweet = "";
+
     START: while (1) {
         my $paddr;
         setTime('now');
+        $lastTweet = scrollTweet( $lastTweet );
 
         eval {
             local $SIG{ALRM} = sub { die "alarm\n" };
