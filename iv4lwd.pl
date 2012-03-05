@@ -49,13 +49,20 @@ cleanUp();
 
 exit(0);
 
+sub recover {
+    syslog("debug", "Attempting to recover...");
+    cleanup();
+    init();
+}
 
 sub setBuffer {
     my $buffer = shift;
     $buffer = substr $buffer, 0, 4;     # chop buffer to 4 chars
     #$buffer =~ tr/a-z/A-Z/;         # convert to uppercase
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_BUFFER, 0, 0, $buffer, 4, 5000 );
+
     syslog("debug", "WARNING: setBuffer: returned $ret") if ($ret != 4);
+    recover() if ($ret != 4);
 }
 
 sub getBuffer {
@@ -67,7 +74,9 @@ sub getBuffer {
 
 sub getADC {
     my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_ADC, 0, 0, my $buffer = "\0", 1, 5000 );
+
     syslog("debug", "WARNING: getADC: returned $ret") if ($ret != 1);
+    recover() if ($ret != 1);
 
     $buffer = unpack("C", $buffer);
 
@@ -78,12 +87,16 @@ sub setState {
     my $state = shift;
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_STATE, ord($state), 0, my $buffer = "\0", 0, 5000 );
+
     syslog("debug", "WARNING: setState: returned $ret") if ($ret != 0);
+    recover() if ($ret != 0);
 }
 
 sub getState {
     my $ret = $dev->control_msg( 192, $CUSTOM_RQ_GET_STATE, 0, 0, my $buffer = "\0", 1, 5000 );
+
     syslog("debug", "WARNING: getState: returned $ret") if ($ret != 1);
+    recover() if ($ret != 1);
 
     return $buffer;
 }
@@ -106,7 +119,9 @@ sub setTime {
     my $buffer = pack ("CCCC", $hms[3], $hms[2], $hms[1], $hms[0]);
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_TIME, 0, 0, $buffer, 4, 5000 );
+
     syslog("debug", "WARNING: setTime: returned $ret") if ($ret != 4);
+    recover() if ($ret != 4);
 }
 
 sub getTime {
@@ -124,7 +139,9 @@ sub setRaw {
     my $buffer = pack ("CCC", hex($charString[0]), hex($charString[1]), hex($charString[2]));
 
     my $ret = $dev->control_msg( 64, $CUSTOM_RQ_SET_RAW, $place, 0, $buffer, 3, 5000 );
+
     syslog("debug", "WARNING: setRaw: returned $ret") if ($ret != 3);
+    recover() if ($ret != 3);
 
     return $buffer;
 }
@@ -163,7 +180,7 @@ sub twirl {
             for (0 .. 3) {
                 my $tube = $_;
                 setRaw($tube, $letter);
-                usleep(15000);
+                usleep(25000);
             }
         }
         $revolutions -= 1;
@@ -319,29 +336,6 @@ sub walk {
 	setState($initialState);
 }
 
-sub scrollTweet {
-    my $lastTweet = shift;
-
-    my $cmd = 'perl tweetronium.pl';
-    my $tweet = `$cmd`;
-    chomp $tweet;
-
-    ($tweet = $tweet) =~ s/.*<(.*)>/\@$1/;
-    ($tweet = $tweet) =~ s/[^ A-Za-z0-9@?]//g;
-    ($tweet = $tweet) =~ s/http.*//;
-
-    print "tweet:     $tweet\n";
-    print "lastTweet: $lastTweet\n";
-
-    return $tweet if ($tweet eq $lastTweet);
-
-    $lastTweet = $tweet;
-
-    scrollString($tweet);
-
-    return $tweet;
-}
-
 sub init {
     openlog($0, "pid", "local0");
     syslog("info", "iv4lwd starting...");
@@ -398,12 +392,9 @@ sub main {
         syslog("info", "server started on port $port");
     }
 
-    my $lastTweet = "";
-
     START: while (1) {
         my $paddr;
         setTime('now');
-        $lastTweet = scrollTweet( $lastTweet );
 
         eval {
             local $SIG{ALRM} = sub { die "alarm\n" };
@@ -445,6 +436,9 @@ sub main {
         }
         if ($command =~ /sb\s(.*)/ ) {
             setBuffer($1);
+        }
+        if ($command =~ /sr\s(\d)\s([a-z]+)/ ) {
+            setRaw($1, $2);
         }
         if ($command =~ /volts\?/ ) {
             my $buffer = getADC();
